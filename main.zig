@@ -241,7 +241,6 @@ pub fn BFVM(maxCells: usize) type {
                     vm.ptr = @intCast(res);
                 },
                 .ADD => {
-                    // *why*
                     const amt: i8 = @truncate(cur.args[0]);
                     const cell: i8 = @intCast(vm.cells[vm.ptr]);
                     vm.cells[vm.ptr] = @as(u8, @intCast(@as(i8, @truncate(@addWithOverflow(cell, amt)[0]))));
@@ -256,6 +255,7 @@ pub fn BFVM(maxCells: usize) type {
                 },
                 .CLEAR => vm.cells[vm.ptr] = 0,
                 .MUL => {
+                    // *why*
                     const offset: isize = cur.args[1];
                     const amt: u8 = @truncate(@as(usize, @intCast(cur.args[0])));
                     vm.cells[@as(usize, @intCast(@as(isize, @intCast(vm.ptr)) + offset))] =
