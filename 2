@@ -60,13 +60,6 @@ const OpCode = struct {
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-const RuntimeResult = error{ EndOfProgram, NegativePointer };
-
-const CompileError = error{
-    UnclosedLoop,
-    StrayRightBracket,
-};
-
 pub fn BFVM(maxCells: usize) type {
     return struct {
         const Self = @This();
@@ -89,6 +82,11 @@ pub fn BFVM(maxCells: usize) type {
             vm.code.append(OpCode.new(op, a, b)) catch
                 @panic("couldn't append to code array in vm");
         }
+
+        const CompileError = error{
+            UnclosedLoop,
+            StrayRightBracket,
+        };
 
         pub fn compile(vm: *Self, code: []const u8) !void {
             {
@@ -166,7 +164,7 @@ pub fn BFVM(maxCells: usize) type {
             var maxOff: isize = 0;
             var factor: isize = 0;
 
-            while (true) {
+            const loope = while (true) {
                 end += 1;
                 if (end >= items.len) return start;
 
@@ -181,13 +179,15 @@ pub fn BFVM(maxCells: usize) type {
                             const loope = &items[end];
                             if (loope.type != .LOOPE) return start;
                             end += 1;
-                            break;
+                            break loope.args[0];
                         }
                     },
                     else => return start,
                 }
                 if (@abs(ptrOff) > @abs(maxOff)) maxOff = ptrOff;
-            }
+            };
+
+            std.debug.assert(loope == start + 1);
 
             if (ptrOff != 0) return start;
 
@@ -225,9 +225,12 @@ pub fn BFVM(maxCells: usize) type {
             }
         }
 
-        pub fn disassemble(vm: *Self, writer: anytype) !void {
+        pub fn disassemble(vm: *Self) !void {
+            const writer = io.getStdErr().writer();
             for (vm.code.items, 0..) |op, i| try op.disassemble(i, writer);
         }
+
+        const RuntimeResult = error{EndOfProgram};
 
         pub fn step(vm: *Self) !void {
             if (vm.ip >= vm.code.items.len) return RuntimeResult.EndOfProgram;
@@ -235,11 +238,7 @@ pub fn BFVM(maxCells: usize) type {
             const cur = vm.code.items[vm.ip];
             vm.ip += 1;
             switch (cur.type) {
-                .MOVE => {
-                    const res = @as(isize, @intCast(vm.ptr)) + cur.args[0];
-                    if (res < 0) return RuntimeResult.NegativePointer;
-                    vm.ptr = @intCast(res);
-                },
+                .MOVE => vm.ptr = @intCast(@as(isize, @intCast(vm.ptr)) + cur.args[0]),
                 .ADD => {
                     // *why*
                     const amt: i8 = @truncate(cur.args[0]);
@@ -265,30 +264,16 @@ pub fn BFVM(maxCells: usize) type {
             }
         }
 
-        pub fn run(vm: *Self, writer: anytype) !void {
+        pub fn run(vm: *Self) !void {
             while (true) {
-                vm.step() catch |e| switch (e) {
-                    RuntimeResult.EndOfProgram => {
-                        _ = try writer.write(vm.output.items);
-                        return;
-                    },
-                    RuntimeResult.NegativePointer => {
-                        _ = try stderr.write("error: attempt to move pointer into the negatives\n");
-                        exitFailure();
-                    },
-                    else => return e,
-                };
+                vm.step() catch |e|
+                    if (e == RuntimeResult.EndOfProgram) return;
             }
         }
 
         // pub fn clearOutput(vm: *Self) void {
         //     vm.output.clearAndFree();
         // }
-        //
-        pub fn deinit(_: *Self) void {
-            // vm.code.deinit();
-            // vm.output.deinit();
-        }
     };
 }
 
@@ -366,34 +351,24 @@ pub fn main() !void {
     if (res.args.help != 0)
         return printUsage();
 
+    const input = res.positionals[0];
+    const output = res.positionals[1];
     const compile = res.args.compile != 0;
     const disassemble = res.args.disassemble != 0;
 
-    if (compile) {
-        _ = try stderr.write("todo: serialize vm code for compile flag");
-        exitFailure();
-    }
-
-    if (res.positionals.len < 1) {
+    if (input.len == 0) {
         _ = try stdout.write("error: expected input file");
         exitFailure();
     }
 
-    const input = res.positionals[0];
-
     if (disassemble and compile) {
         _ = try stdout.write("error: can't specify compile and disassemble together");
-        exitFailure();
     }
 
-    const output = r: {
-        const requiredOutput = compile or disassemble;
-        if (requiredOutput and res.positionals.len < 2) {
-            _ = try stdout.write("error: expected output file for compilation");
-            exitFailure();
-        }
-        break :r if (requiredOutput) res.positionals[1] else null;
-    };
+    if (compile and output.len == 0) {
+        _ = try stdout.write("error: expected output file for compilation");
+        exitFailure();
+    }
 
     var inputFile = try std.fs.cwd().openFile(input, .{});
     defer inputFile.close();
@@ -402,28 +377,7 @@ pub fn main() !void {
     defer inputCode.deinit();
 
     try inputFile.reader().readAllArrayList(&inputCode, 4096);
-
-    var vm = BFVM(30000){};
-    defer vm.deinit();
-
-    try vm.compile(inputCode.items);
-
-    out: {
-        if (output) |o| {
-            var outputFile = try std.fs.cwd().createFile(o, .{});
-
-            if (disassemble) {
-                try vm.disassemble(outputFile.writer());
-                break :out;
-            }
-
-            try vm.run(outputFile.writer());
-        } else {
-            try vm.run(stdout);
-        }
-    }
-
-    vm.deinit();
+    std.debug.print("{s}", .{inputCode.items});
 }
 
 const expect = std.testing.expect;
